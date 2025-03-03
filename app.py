@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 import re  # Import regex for extracting GVWR numbers
-import win32com.client  # Requires pywin32
+# import win32com.client  # Requires pywin32
 import pythoncom  # Needed for COM initialization in Streamlit
 import time
 
@@ -142,77 +142,78 @@ if uploaded_file is not None:
         # Store the business type in session state
         st.session_state["business_type"] = business_type
 
-        if business_type == "Renewal Business":
-            # renewal_xml = st.file_uploader("Upload the XML file for Renewal Business", type=["xml"])
+        # if business_type == "Renewal Business":
+        #     # renewal_xml = st.file_uploader("Upload the XML file for Renewal Business", type=["xml"])
             
-            # if renewal_xml is None:
-            #     st.warning("Please upload an XML file to proceed with Renewal Business.")
-            #     st.stop()  # Stop further execution if XML file is not uploaded
+        #     # if renewal_xml is None:
+        #     #     st.warning("Please upload an XML file to proceed with Renewal Business.")
+        #     #     st.stop()  # Stop further execution if XML file is not uploaded
 
-            # Define the full path to the macro-enabled workbook
-            macro_workbook_path = r"C:\Users\ez4ke.KDAWG\Desktop\astrus\autoschedule_import\Auto Schedule XML Import Export.xlsm"
+        #     # Define the full path to the macro-enabled workbook
+        #     macro_workbook_path = r"C:\Users\ez4ke.KDAWG\Desktop\astrus\autoschedule_import\Auto Schedule XML Import Export.xlsm"
+        #     # macro_workbook_path = r"C:\Users\kzhang2\scripts\auto import\Auto Schedule XML Import Export.xlsm"
 
-            # Run the macro using Excel COM interface
-            try:
-                pythoncom.CoInitialize()  # Fix for CoInitialize error
+        #     # Run the macro using Excel COM interface
+        #     try:
+        #         pythoncom.CoInitialize()  # Fix for CoInitialize error
                 
-                excel = win32com.client.Dispatch("Excel.Application")
-                excel.Visible = True  # Run in the background
+        #         excel = win32com.client.Dispatch("Excel.Application")
+        #         excel.Visible = True  # Run in the background
 
-                wb = excel.Workbooks.Open(macro_workbook_path)
+        #         wb = excel.Workbooks.Open(macro_workbook_path)
                 
-                # Run the macro to process the XML file
-                excel.Application.Run("'Auto Schedule XML Import Export.xlsm'!ThisWorkbook.ImportXML")
+        #         # Run the macro to process the XML file
+        #         excel.Application.Run("'Auto Schedule XML Import Export.xlsm'!ThisWorkbook.ImportXML")
                 
-                # Allow time for macro execution
-                time.sleep(2)  # Adjust this time if needed
+        #         # Allow time for macro execution
+        #         time.sleep(2)  # Adjust this time if needed
                 
-                # Get the processed data from the "Vehicle Schedule" tab
-                ws = wb.Sheets("Vehicle Schedule")
+        #         # Get the processed data from the "Vehicle Schedule" tab
+        #         ws = wb.Sheets("Vehicle Schedule")
                 
-                # Set explicit column range (B:AQ corresponds to columns 2:43 in Excel)
-                start_col = 2  # Column B
-                end_col = 43   # Column AQ
+        #         # Set explicit column range (B:AQ corresponds to columns 2:43 in Excel)
+        #         start_col = 2  # Column B
+        #         end_col = 43   # Column AQ
 
-                # Find the last used row based on column B (ensuring we capture all data)
-                last_row = ws.Cells(ws.Rows.Count, start_col).End(-4162).Row  # -4162 is xlUp
+        #         # Find the last used row based on column B (ensuring we capture all data)
+        #         last_row = ws.Cells(ws.Rows.Count, start_col).End(-4162).Row  # -4162 is xlUp
 
-                # Read column headers (row 6)
-                headers = [ws.Cells(6, col).Value for col in range(start_col, end_col + 1)]
+        #         # Read column headers (row 6)
+        #         headers = [ws.Cells(6, col).Value for col in range(start_col, end_col + 1)]
 
-                # Read data from row 7 onwards
-                data = []
-                for row in range(7, last_row + 1):  # Start from row 7
-                    row_data = [ws.Cells(row, col).Value for col in range(start_col, end_col + 1)]
+        #         # Read data from row 7 onwards
+        #         data = []
+        #         for row in range(7, last_row + 1):  # Start from row 7
+        #             row_data = [ws.Cells(row, col).Value for col in range(start_col, end_col + 1)]
                     
-                    # Ensure we're not adding empty rows (skip completely blank rows)
-                    if any(row_data):  # If any value in row is non-empty, add to data
-                        data.append(row_data)
+        #             # Ensure we're not adding empty rows (skip completely blank rows)
+        #             if any(row_data):  # If any value in row is non-empty, add to data
+        #                 data.append(row_data)
 
-                # Convert to DataFrame
-                vehicle_schedule_df = pd.DataFrame(data, columns=headers)
+        #         # Convert to DataFrame
+        #         vehicle_schedule_df = pd.DataFrame(data, columns=headers)
 
-                # Close the workbook (without saving)
-                wb.Close(SaveChanges=False)
-                excel.Quit()
+        #         # Close the workbook (without saving)
+        #         wb.Close(SaveChanges=False)
+        #         excel.Quit()
 
-                # Properly release COM object (prevent memory leaks)
-                del excel
+        #         # Properly release COM object (prevent memory leaks)
+        #         del excel
                 
 
-                # Display the extracted data
-                st.subheader("Processed Vehicle Schedule (from Excel Macro)")
-                st.write(vehicle_schedule_df)
+        #         # Display the extracted data
+        #         st.subheader("Processed Vehicle Schedule (from Excel Macro)")
+        #         st.write(vehicle_schedule_df)
 
-                # Provide a download option
-                csv = vehicle_schedule_df.to_csv(index=False).encode("utf-8")
-                st.download_button("Download Vehicle Schedule Data", csv, "vehicle_schedule.csv", "text/csv")
+        #         # Provide a download option
+        #         csv = vehicle_schedule_df.to_csv(index=False).encode("utf-8")
+        #         st.download_button("Download Vehicle Schedule Data", csv, "vehicle_schedule.csv", "text/csv")
 
-            except Exception as e:
-                st.error(f"Error running the macro or reading the Excel file: {e}")
+        #     except Exception as e:
+        #         st.error(f"Error running the macro or reading the Excel file: {e}")
 
-            finally:
-                pythoncom.CoUninitialize()  # Proper cleanup        
+        #     finally:
+        #         pythoncom.CoUninitialize()  # Proper cleanup        
 
 
         # Select VIN Column
