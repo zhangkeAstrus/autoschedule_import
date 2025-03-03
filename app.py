@@ -3,7 +3,7 @@ import pandas as pd
 import requests
 import re  # Import regex for extracting GVWR numbers
 # import win32com.client  # Requires pywin32
-import pythoncom  # Needed for COM initialization in Streamlit
+# import pythoncom  # Needed for COM initialization in Streamlit
 import time
 
 # VIN Cleaning Function
