@@ -5,6 +5,7 @@ import re  # regex for extracting GVWR numbers
 import time
 import xml.etree.ElementTree as ET
 import io
+import matplotlib.pyplot as plt
 
 # VIN Cleaning Function
 def clean_vin(vin):
@@ -202,5 +203,29 @@ elif page == "VIN Processing & Results":
             csv = vehicle_schedule.to_csv(index=False).encode("utf-8")
             st.download_button("Download CSV", data=csv, file_name="vehicle_schedule.csv", mime="text/csv")
 
- 
+    if "vehicle_schedule" in st.session_state:
+        vehicle_schedule = st.session_state["vehicle_schedule"]
 
+        # Ensure required columns exist before creating summary
+        if "State" in vehicle_schedule.columns and "Class Code" in vehicle_schedule.columns:
+            
+            # Aggregate counts by State and Class Code
+            summary_df = vehicle_schedule.groupby(["State", "Class Code"]).size().reset_index(name="Vehicle Count")
+            
+            # Display summary data
+            st.subheader("Summary: Number of Vehicles by State and Class Code")
+            st.dataframe(summary_df)
+
+            # Plot the data using Matplotlib
+            fig, ax = plt.subplots(figsize=(10, 6))
+            for key, grp in summary_df.groupby("Class Code"):
+                ax.bar(grp["State"], grp["Vehicle Count"], label=f"Class Code {key}")
+
+            ax.set_xlabel("State")
+            ax.set_ylabel("Number of Vehicles")
+            ax.set_title("Number of Vehicles by State and Class Code")
+            ax.legend(title="Class Code", bbox_to_anchor=(1.05, 1), loc="upper left")
+            plt.xticks(rotation=45)  # Rotate state labels for readability
+
+            # Show the plot in Streamlit
+            st.pyplot(fig)
