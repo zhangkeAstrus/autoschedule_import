@@ -160,7 +160,7 @@ elif page == "VIN Processing & Results":
         mapped_df = st.session_state["mapped_df"]
         if "Cleaned VIN" in mapped_df.columns:
             if st.button("Decode VINs"):
-                decoded_vin_df = decode_vins(mapped_df["Cleaned VIN"].dropna().tolist())
+                decoded_vin_df = decode_vins(mapped_df["Cleaned VIN"].tolist())
                 selected_fields = ["VIN", "Make", "Model", "VehicleType", "GVWR", "ModelYear" , "BodyClass"]
                 decoded_vin_df = decoded_vin_df[selected_fields]
                 
@@ -184,20 +184,23 @@ elif page == "VIN Processing & Results":
         decoded_vin_df = st.session_state["decoded_vin_df"].copy()
         final_df = st.session_state["mapped_df"].copy()
 
-        vehicle_schedule = pd.DataFrame(columns=vehicle_schedule_fields)
-        for column in vehicle_schedule_fields:
-            if column in decoded_vin_df.columns:
-                vehicle_schedule[column] = decoded_vin_df[column]
-            if column in final_df.columns:
-                vehicle_schedule[column] = vehicle_schedule[column].fillna(final_df[column])
-        
+        # Merge data: decoded_vin_df takes priority, but final_df fills missing values
+        if not decoded_vin_df.empty:
+            vehicle_schedule = decoded_vin_df.combine_first(final_df)
+        else:
+            vehicle_schedule = final_df
+
+        # Ensure all required columns exist, filling missing ones with an empty string
+        vehicle_schedule = vehicle_schedule.reindex(columns=vehicle_schedule_fields, fill_value="")
+
         st.subheader("Final Vehicle Schedule Data")
         st.write(vehicle_schedule)
-        
+
         st.session_state["vehicle_schedule"] = vehicle_schedule
 
         if st.button("Download Vehicle Schedule as CSV"):
             csv = vehicle_schedule.to_csv(index=False).encode("utf-8")
             st.download_button("Download CSV", data=csv, file_name="vehicle_schedule.csv", mime="text/csv")
+
  
 
