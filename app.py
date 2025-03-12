@@ -7,6 +7,8 @@ import xml.etree.ElementTree as ET
 import io
 import matplotlib.pyplot as plt
 
+st.set_page_config(layout="wide")
+
 # VIN Cleaning Function
 def clean_vin(vin):
     """Cleans up the VIN by trimming spaces and replacing O->0, I->1."""
@@ -47,16 +49,16 @@ def map_vehicle_type(vehicle_type, body_class, gvw):
         return "Trailer"
     elif body_class == "Truck-Tractor":
         return "Truck Tractor"
-    if gvw is None:
-        return "Unknown"
     if gvw <= 10000:
         return "Light Truck"
     elif gvw <= 20000:
         return "Medium Truck"
     elif gvw <= 45000:
         return "Heavy Truck"
-    else:
+    elif gvw > 45000:
         return "Extra Heavy Truck"
+    else:
+        return "Trailer"
 
 # Function to map Vehicle Type to Class Code
 def map_class_code(vehicle_type):
@@ -116,8 +118,16 @@ if page == "Upload & Preprocessing":
         
         if vin_column != "(None)":
             df["Cleaned VIN"] = df[vin_column].astype(str).apply(clean_vin)
-            st.subheader("Original and Cleaned VINs")
-            st.dataframe(df[[vin_column, "Cleaned VIN"]].head())
+            st.subheader("Original and Cleaned VINs (Only Modified VINs)")
+
+            # Filter to show only changed VINs
+            filtered_vin_df = df[df[vin_column] != df["Cleaned VIN"]][[vin_column, "Cleaned VIN"]]
+
+            # Display only if there are modified VINs
+            if not filtered_vin_df.empty:
+                st.dataframe(filtered_vin_df)
+            else:
+                st.write("No VINs were modified during cleaning.")
         
         # Desired column mappings
         desired_columns = [
@@ -135,16 +145,41 @@ if page == "Upload & Preprocessing":
             selected_columns["VIN"] = vin_column
             selected_columns["Cleaned VIN"] = "Cleaned VIN"
 
-        # Extract data using selected columns but **rename them to desired names**
-        final_df = pd.DataFrame()
+        expected_dtypes = {
+            "Vehicle Year": int,
+            "GVW": float,
+            "Cost New": float,
+            "Zip": str  # Keep as str to preserve leading zeros
+        }
 
+        # Create new dataframe with mapped columns
+        final_df = pd.DataFrame()
         for desired_col, uploaded_col in selected_columns.items():
-            final_df[desired_col] = df[uploaded_col]  # Use desired column names directly
-        
-        st.session_state["mapped_df"] = final_df
-        st.subheader("Final Input Data")
+            final_df[desired_col] = df[uploaded_col]
+
+        # Convert data types and handle errors
+        for col, dtype in expected_dtypes.items():
+            if col in final_df.columns:
+                try:
+                    if dtype == int and col != "Zip":  # ZIP is handled separately
+                        final_df[col] = pd.to_numeric(final_df[col], errors="coerce").fillna(0).astype(int)
+                    elif dtype == float:
+                        final_df[col] = pd.to_numeric(final_df[col], errors="coerce").fillna(0.0).astype(float)
+                    elif col == "Zip":
+                        # Convert to integer first, then back to string, then ensure 5-digit format
+                        final_df[col] = pd.to_numeric(final_df[col], errors="coerce").fillna(0).astype(int).astype(str)
+                        final_df[col] = final_df[col].apply(lambda x: x.zfill(5))  # Ensures leading zeros
+                except Exception as e:
+                    st.warning(f"Could not convert column {col} to {dtype}. Error: {str(e)}")
+
+        # class codes adjustment
+        if "Class Code" in final_df.columns:
+            final_df["Class Code"] = pd.to_numeric(final_df["Class Code"], errors="coerce").fillna(0).astype(int)  # Ensure integer
+            final_df["Class Code"] = final_df["Class Code"].astype(str).apply(lambda x: x.zfill(5) + "0")  # Format properly
+
+        st.subheader("Final Input Data with Validated Data Types")
         st.write(final_df)
-        
+                
         # Save Inputs Button
         if st.button("Save Inputs"):
             st.session_state["sheet_name_index"] = xls.sheet_names.index(sheet_name)
@@ -169,6 +204,11 @@ elif page == "VIN Processing & Results":
                 decoded_vin_df["GVW"] = decoded_vin_df["GVWR"].apply(extract_gvwr_weight)
                 decoded_vin_df["Mapped Vehicle Type"] = decoded_vin_df.apply(lambda row: map_vehicle_type(row["VehicleType"], row["BodyClass"], row["GVW"]), axis=1)
                 decoded_vin_df["Class Code"] = decoded_vin_df["Mapped Vehicle Type"].apply(map_class_code)
+
+                # Replace empty strings ("") with NaN to ensure combine_first() works correctly
+                decoded_vin_df.replace("", pd.NA, inplace=True)
+
+                decoded_vin_df.rename(columns = {"ModelYear" : "Vehicle Year", "VIN" : "Cleaned VIN"}, inplace = True)
                 
                 st.session_state["decoded_vin_df"] = decoded_vin_df
                 st.success("VINs decoded and class codes assigned successfully!")
@@ -177,55 +217,41 @@ elif page == "VIN Processing & Results":
         st.subheader("Decoded VIN Results with Class Codes")
         st.write(st.session_state["decoded_vin_df"])
 
-    st.subheader("Business Type")
-    business_type = st.radio("Select Business Type:", ["New Business", "Renewal Business"])
-    st.session_state["business_type"] = business_type
-
     if "decoded_vin_df" in st.session_state and "mapped_df" in st.session_state:
         decoded_vin_df = st.session_state["decoded_vin_df"].copy()
         final_df = st.session_state["mapped_df"].copy()
+        vehicle_schedule = final_df.copy()
 
-        # Merge data: decoded_vin_df takes priority, but final_df fills missing values
-        if not decoded_vin_df.empty:
-            vehicle_schedule = decoded_vin_df.combine_first(final_df)
-        else:
-            vehicle_schedule = final_df
+        # Merge data: decoded_vin_df takes priority, final_df fills missing values
+        vehicle_schedule = decoded_vin_df.combine_first(final_df)
 
-        # Ensure all required columns exist, filling missing ones with an empty string
+        # Ensure all required columns exist and fill missing ones with empty strings
         vehicle_schedule = vehicle_schedule.reindex(columns=vehicle_schedule_fields, fill_value="")
 
-        st.subheader("Final Vehicle Schedule Data")
-        st.write(vehicle_schedule)
-
+        # st.write(decoded_vin_df[decoded_vin_df['Make']==''])
+        # Save to session state for further processing
         st.session_state["vehicle_schedule"] = vehicle_schedule
+
+        st.subheader("Final Vehicle Schedule Data")
+        edited_vehicle_schedule = st.data_editor(vehicle_schedule, num_rows="dynamic")
+
+        # Optionally save the edited DataFrame back to session state
+        st.session_state["vehicle_schedule"] = edited_vehicle_schedule
+
+
 
         if st.button("Download Vehicle Schedule as CSV"):
             csv = vehicle_schedule.to_csv(index=False).encode("utf-8")
             st.download_button("Download CSV", data=csv, file_name="vehicle_schedule.csv", mime="text/csv")
 
-    if "vehicle_schedule" in st.session_state:
-        vehicle_schedule = st.session_state["vehicle_schedule"]
-
-        # Ensure required columns exist before creating summary
-        if "State" in vehicle_schedule.columns and "Class Code" in vehicle_schedule.columns:
+    # if "vehicle_schedule" in st.session_state:
+    #     vehicle_schedule = st.session_state["vehicle_schedule"]
+    #     # Ensure required columns exist before creating summary
+    #     if "State" in vehicle_schedule.columns and "Class Code"  in vehicle_schedule.columns:
             
-            # Aggregate counts by State and Class Code
-            summary_df = vehicle_schedule.groupby(["State", "Class Code"]).size().reset_index(name="Vehicle Count")
+    #         # Aggregate counts by State and Class Code
+    #         summary_df = vehicle_schedule.groupby(["State","Class Code"]).size().reset_index(name="Vehicle Count")
             
-            # Display summary data
-            st.subheader("Summary: Number of Vehicles by State and Class Code")
-            st.dataframe(summary_df)
-
-            # Plot the data using Matplotlib
-            fig, ax = plt.subplots(figsize=(10, 6))
-            for key, grp in summary_df.groupby("Class Code"):
-                ax.bar(grp["State"], grp["Vehicle Count"], label=f"Class Code {key}")
-
-            ax.set_xlabel("State")
-            ax.set_ylabel("Number of Vehicles")
-            ax.set_title("Number of Vehicles by State and Class Code")
-            ax.legend(title="Class Code", bbox_to_anchor=(1.05, 1), loc="upper left")
-            plt.xticks(rotation=45)  # Rotate state labels for readability
-
-            # Show the plot in Streamlit
-            st.pyplot(fig)
+    #         # Display summary data
+    #         st.subheader("Summary: Number of Vehicles by State Vehicle Type")
+    #         st.dataframe(summary_df)
