@@ -47,9 +47,13 @@ def map_vehicle_type(vehicle_type, body_class, gvw):
     """Maps GVWR and VehicleType to the corresponding Vehicle Type category."""
     if vehicle_type == "TRAILER":
         return "Trailer"
-    elif body_class == "Truck-Tractor":
-        return "Truck Tractor"
-    if gvw <= 10000:
+    elif vehicle_type =="MULTIPURPOSE PASSENGER VEHICLE (MPV)":
+        return "PPT"
+    elif body_class == "Truck-Tractor" and gvw <= 45000:
+        return "Truck Tractor_H"
+    elif body_class == "Truck-Tractor" and gvw > 45000:
+        return "Truck Tractor_EH"
+    elif gvw <= 10000:
         return "Light Truck"
     elif gvw <= 20000:
         return "Medium Truck"
@@ -58,18 +62,31 @@ def map_vehicle_type(vehicle_type, body_class, gvw):
     elif gvw > 45000:
         return "Extra Heavy Truck"
     else:
-        return "Trailer"
+        return "Unknown"
+    
+class_code_mapping = {
+    "PPT": "739800",
+    "Light Truck": "014890",
+    "Medium Truck": "214890",
+    "Heavy Truck": "314890",
+    "Extra Heavy Truck": "414890",
+    "Truck Tractor_H": "404890",
+    "Truck Tractor_XH": "504890",
+    "Trailer": "684890"
+}
+
 
 # Function to map Vehicle Type to Class Code
 def map_class_code(vehicle_type):
     """Maps Vehicle Type to its respective Class Code."""
     class_code_mapping = {
-        "Private Passenger": "739800",
+        "PPT": "739800",
         "Light Truck": "014890",
         "Medium Truck": "214890",
         "Heavy Truck": "314890",
-        "Extra Heavy Truck": "404890",
-        "Truck Tractor": "504890",
+        "Extra Heavy Truck": "414890",
+        "Truck Tractor_H": "404890",
+        "Truck Tractor_XH": "504890",
         "Trailer": "684890"
     }
     return class_code_mapping.get(vehicle_type, "Unknown")
@@ -179,6 +196,7 @@ if page == "Upload & Preprocessing":
 
         st.subheader("Final Input Data with Validated Data Types")
         st.write(final_df)
+        st.session_state["mapped_df"] = final_df 
                 
         # Save Inputs Button
         if st.button("Save Inputs"):
@@ -196,8 +214,10 @@ elif page == "VIN Processing & Results":
         mapped_df = st.session_state["mapped_df"]
         if "Cleaned VIN" in mapped_df.columns:
             if st.button("Decode VINs"):
+                start_time = time.time() # start timer
+
                 decoded_vin_df = decode_vins(mapped_df["Cleaned VIN"].tolist())
-                selected_fields = ["VIN", "Make", "Model", "VehicleType", "GVWR", "ModelYear" , "BodyClass"]
+                selected_fields = ["VIN", "Make", "Model", "VehicleType", "GVWR", "ModelYear" , "BodyClass", "ErrorCode", "ErrorText"]
                 decoded_vin_df = decoded_vin_df[selected_fields]
                 
                 # Compute class codes
@@ -209,40 +229,94 @@ elif page == "VIN Processing & Results":
                 decoded_vin_df.replace("", pd.NA, inplace=True)
 
                 decoded_vin_df.rename(columns = {"ModelYear" : "Vehicle Year", "VIN" : "Cleaned VIN"}, inplace = True)
+
+                end_time = time.time() #End timer
+                time_taken = round(end_time - start_time, 2) 
+
+                num_vins_processed = len(decoded_vin_df)
                 
                 st.session_state["decoded_vin_df"] = decoded_vin_df
-                st.success("VINs decoded and class codes assigned successfully!")
+                st.success(f"Processed {num_vins_processed} vehicles. VINs decoded successfully in {time_taken} seconds!")
     
     if "decoded_vin_df" in st.session_state:
         st.subheader("Decoded VIN Results with Class Codes")
-        st.write(st.session_state["decoded_vin_df"])
+        
+        # Check if 'ErrorCode' column exists
+        if "ErrorCode" in st.session_state["decoded_vin_df"].columns:
+            # Identify rows containing Error Codes 6 or 7
+            error_df = st.session_state["decoded_vin_df"][
+                st.session_state["decoded_vin_df"]["ErrorCode"]
+                .astype(str)  # Convert to string
+                .str.contains(r"\b6\b|\b7\b", regex=True, na=False)  # Match standalone 6 or 7
+            ][['Cleaned VIN', 'Vehicle Year', 'Make', 'Model', 'Class Code', 'ErrorText']]
 
-    if "decoded_vin_df" in st.session_state and "mapped_df" in st.session_state:
-        decoded_vin_df = st.session_state["decoded_vin_df"].copy()
-        final_df = st.session_state["mapped_df"].copy()
-        vehicle_schedule = final_df.copy()
+            # Exclude error rows from the main displayed dataframe
+            valid_df = st.session_state["decoded_vin_df"].drop(error_df.index)
 
-        # Merge data: decoded_vin_df takes priority, final_df fills missing values
-        vehicle_schedule = decoded_vin_df.combine_first(final_df)
+            # Display the valid VIN results
+            st.write(valid_df)  
 
-        # Ensure all required columns exist and fill missing ones with empty strings
-        vehicle_schedule = vehicle_schedule.reindex(columns=vehicle_schedule_fields, fill_value="")
+            # Display the error table as an **interactive editable table**
+            if not error_df.empty:
+                st.subheader("Invalid VINs, please fill them out")
 
-        # st.write(decoded_vin_df[decoded_vin_df['Make']==''])
-        # Save to session state for further processing
-        st.session_state["vehicle_schedule"] = vehicle_schedule
+                # Initialize session state for corrected data if not already set
+                if "corrected_error_df" not in st.session_state:
+                    st.session_state["corrected_error_df"] = error_df.copy()
 
-        st.subheader("Final Vehicle Schedule Data")
-        edited_vehicle_schedule = st.data_editor(vehicle_schedule, num_rows="dynamic")
+                # Button to auto-fill missing values
+                if st.button("Fill Missing Make, Model, and Class Code with Trailer"):
+                    corrected_df = st.session_state["corrected_error_df"].copy()
+                    corrected_df.loc[corrected_df["Make"].isna() | (corrected_df["Make"] == ""), "Make"] = "Trailer"
+                    corrected_df.loc[corrected_df["Model"].isna() | (corrected_df["Model"] == ""), "Model"] = "Trailer"
+                    corrected_df.loc[corrected_df["Class Code"].isna() | (corrected_df["Class Code"] == "" ) | (corrected_df["Class Code"] == "Unknown" ), "Class Code"] = "684890"
 
-        # Optionally save the edited DataFrame back to session state
-        st.session_state["vehicle_schedule"] = edited_vehicle_schedule
+                    # Save changes to session state and force rerun
+                    st.session_state["corrected_error_df"] = corrected_df
+                    st.rerun()  # Forces Streamlit to refresh the UI with updated table
+
+                # Editable Data Table (Without Class Code Restriction)
+                edited_error_df = st.data_editor(st.session_state["corrected_error_df"], num_rows="dynamic")
+
+                # Save corrected data
+                if st.button("Save Corrected VINs"):
+                    st.session_state["corrected_error_df"] = edited_error_df
+                    st.success("Corrections saved successfully!")
+            else:
+                st.write("No Invalid VINs")
+
+        else:
+            # If "ErrorCode" column does not exist, display full dataframe as default
+            st.write(st.session_state["decoded_vin_df"])
+
+
+        
+
+ 
+    # if "decoded_vin_df" in st.session_state and "mapped_df" in st.session_state:
+    #     decoded_vin_df = st.session_state["decoded_vin_df"].copy()
+
+    #     # Merge data: decoded_vin_df takes priority, final_df fills missing values
+    #     vehicle_schedule = decoded_vin_df.combine_first(st.session_state["mapped_df"].copy())
+
+    #     # Ensure all required columns exist and fill missing ones with empty strings
+    #     vehicle_schedule = vehicle_schedule.reindex(columns=vehicle_schedule_fields, fill_value="")
+
+    #     # st.write(decoded_vin_df[decoded_vin_df['Make']==''])
+    #     # Save to session state for further processing
+    #     st.session_state["vehicle_schedule"] = vehicle_schedule
+
+    #     st.subheader("Final Vehicle Schedule Data")
+    #     edited_vehicle_schedule = st.data_editor(vehicle_schedule, num_rows="dynamic")
+
+    #     # Optionally save the edited DataFrame back to session state
+    #     st.session_state["vehicle_schedule"] = edited_vehicle_schedule
 
 
 
-        if st.button("Download Vehicle Schedule as CSV"):
-            csv = vehicle_schedule.to_csv(index=False).encode("utf-8")
-            st.download_button("Download CSV", data=csv, file_name="vehicle_schedule.csv", mime="text/csv")
+    #     if st.button("Download Vehicle Schedule as CSV"):
+    #         csv = vehicle_schedule.to_csv(index=False).encode("utf-8")
+    #         st.download_button("Download CSV", data=csv, file_name="vehicle_schedule.csv", mime="text/csv")
 
     # if "vehicle_schedule" in st.session_state:
     #     vehicle_schedule = st.session_state["vehicle_schedule"]
