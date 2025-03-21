@@ -91,6 +91,50 @@ def map_class_code(vehicle_type):
     }
     return class_code_mapping.get(vehicle_type, "Unknown")
 
+def check_deductible_restrictions(df):
+    violations = []
+    warnings = []
+
+    for idx, row in df.iterrows():
+        try:
+            cost_new = float(row.get("Cost New", 0))
+            model = str(row.get("Model", "")).upper()
+            class_code = str(row.get("Class Code", ""))
+            otc_ded = float(row.get("OTC Deductible", 0))
+            coll_ded = float(row.get("Collision Ded", 0))
+        except:
+            continue
+
+        # Map Class Code to Vehicle Type
+        vehicle_type = next((k for k, v in class_code_mapping.items() if v == class_code), "Unknown")
+
+        # Rule 1: Trucks > $100k need $5k minimum deductible
+        if vehicle_type in ["Light Truck", "Medium Truck", "Heavy Truck", "Extra Heavy Truck", "Truck Tractor_H", "Truck Tractor_XH"] and cost_new > 100000:
+            if otc_ded < 5000 or coll_ded < 5000:
+                violations.append({**row, "Reason": "Truck > $100k requires $5k minimum deductible"})
+
+        # Rule 2: Cybertruck requires $10k minimum deductible
+        if "CYBERTRUCK" in model:
+            if otc_ded < 10000 or coll_ded < 10000:
+                violations.append({**row, "Reason": "Cybertruck requires $10k minimum deductible"})
+
+        # Rule 3: PPT > $125k needs $10k deductible
+        if vehicle_type == "PPT" and cost_new > 125000:
+            if otc_ded < 10000 or coll_ded < 10000:
+                violations.append({**row, "Reason": "PPT > $125k requires $10k minimum deductible"})
+
+    # Rule 4: Trucks > $200k referral warning
+    referral_vehicles = df[
+        (df["Cost New"] > 200000) &
+        df["Class Code"].isin([class_code_mapping[k] for k in [
+            "Light Truck", "Medium Truck", "Heavy Truck", "Extra Heavy Truck", "Truck Tractor_H", "Truck Tractor_XH"
+        ]])
+    ]
+    if not referral_vehicles.empty:
+        warnings.append("🚨 Referral to Chubb required for trucks over $200k.")
+
+    return pd.DataFrame(violations), warnings
+
 vehicle_schedule_fields = [
     "State", "Vehicle Sequence No", "City", "Zip", "Garage Territory", "Town Code",
     "County Code", "Tax Terr Code", "Vehicle Year", "Make", "Model", "Cleaned VIN",
@@ -106,7 +150,7 @@ vehicle_schedule_fields = [
 
 st.title("Vehicle Schedule Submission Review")
 st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to:", ["Upload & Preprocessing", "VIN Processing & Results"])
+page = st.sidebar.radio("Go to:", ["Upload & Preprocessing", "VIN Processing" , "Coverage Processing"])
 
 if page == "Upload & Preprocessing":
     uploaded_file = st.file_uploader("Upload an Excel file with vehicle submission data", type=["xlsx"])
@@ -208,8 +252,8 @@ if page == "Upload & Preprocessing":
                 st.session_state[f"col_{col}_index"] = vin_column_options.index(column_mapping.get(col, "(None)"))
             st.success("Inputs saved successfully!")
 
-elif page == "VIN Processing & Results":
-    st.subheader("Decode VINs using NHTSA API")
+elif page == "VIN Processing":
+    st.header("Decode VINs using NHTSA API")
     if "mapped_df" in st.session_state:
         mapped_df = st.session_state["mapped_df"]
         if "Cleaned VIN" in mapped_df.columns:
@@ -295,6 +339,7 @@ elif page == "VIN Processing & Results":
 
  
     if "decoded_vin_df" in st.session_state and "mapped_df" in st.session_state:
+        st.subheader("Mapped Vehicle List")
         if "corrected_vehicle_schedule" not in st.session_state:
             decoded_vin_df_cleaned = st.session_state["decoded_vin_df"].copy()[['Cleaned VIN', 'Make', 'Model', 'Vehicle Year', 'GVW', 'Class Code']]
 
@@ -304,8 +349,60 @@ elif page == "VIN Processing & Results":
             vehicle_schedule.rename(columns={'Cleaned VIN': 'VIN'}, inplace=True)
             st.session_state["corrected_vehicle_schedule"] = vehicle_schedule
 
+
+        # Create a two-column layout to display the updated schedule and summary
+        col1, col2 = st.columns([3,1])
+        
+        with col1:
+            st.write(st.session_state["corrected_vehicle_schedule"])
+        
+        with col2:
+            df = st.session_state["corrected_vehicle_schedule"]
+            summary_df = df.groupby("Class Code").size().reset_index(name="Vehicle Count")
+
+            # Calculate Power Units subtotal and total
+            power_units_count = df[df["Class Code"] != "684890"].shape[0]
+            total_count = df.shape[0]
+
+            # Append Power Units and Total rows
+            summary_df = pd.concat([
+                summary_df,
+                pd.DataFrame([{"Class Code": "Power Units", "Vehicle Count": power_units_count}]),
+                pd.DataFrame([{"Class Code": "Total Units", "Vehicle Count": total_count}])
+            ], ignore_index=True)
+
+            # Format table with bold styling for subtotal and total
+            def format_row(row):
+                if row["Class Code"] in ["Power Units", "Total Units"]:
+                    return f"<tr><td><b>{row['Class Code']}</b></td><td><b>{row['Vehicle Count']}</b></td></tr>"
+                else:
+                    return f"<tr><td>{row['Class Code']}</td><td>{row['Vehicle Count']}</td></tr>"
+
+            table_rows = "\n".join(summary_df.apply(format_row, axis=1))
+
+            html_table = f"""
+            <h5 style='font-size:16px;'>Vehicle Count by Class Code</h5>
+            <table style='width:100%; border-collapse: collapse;'>
+                <thead>
+                    <tr>
+                        <th style='text-align: left;'>Class Code</th>
+                        <th style='text-align: right;'>Vehicle Count</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {table_rows}
+                </tbody>
+            </table>
+            """
+
+            st.markdown(html_table, unsafe_allow_html=True)
+
+
+
+
+
         # Create a filter input for Class Code
-        filter_value = st.text_input("Filter by Class Code:")
+        filter_value = st.text_input("Filter by Class Code and make changes:")
 
         # Filter the DataFrame based on the input value
         if filter_value:
@@ -337,22 +434,126 @@ elif page == "VIN Processing & Results":
             st.session_state["corrected_vehicle_schedule"] = full_df.reset_index()
             
             st.success("Changes saved successfully!")
-            
-            # Create a two-column layout to display the updated schedule and summary
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.write(st.session_state["corrected_vehicle_schedule"])
-            
-            with col2:
-                summary_df = st.session_state["corrected_vehicle_schedule"].groupby("Class Code").size().reset_index(name="Vehicle Count")
-                st.subheader("Vehicle Count by Class Code")
-                st.table(summary_df)
+
+            st.rerun()
+
+elif page == "Coverage Processing":
+    st.header("Coverage Processing and Underwriting Checks")
+
+    if "corrected_vehicle_schedule" in st.session_state:
+        df_coverage = st.session_state["corrected_vehicle_schedule"].copy()
+
+        if "Cost New" in df_coverage.columns:
+
+            # Ensure deductible columns exist
+            if "OTC Deductible" not in df_coverage.columns:
+                df_coverage["OTC Deductible"] = ""
+            if "Collision Ded" not in df_coverage.columns:
+                df_coverage["Collision Ded"] = ""
+
+            st.subheader("Underwriting Deductible Rules")
+
+            # Rule 1: Power Units less than 10 years old require 5k deductible
+            if st.button("Apply Rule 1: Power Units < 10 yrs → $5K Deductible"):
+                current_year = pd.Timestamp.now().year
+                vehicle_year_series = pd.to_numeric(df_coverage["Vehicle Year"], errors="coerce")
+                
+                condition = (
+                    (~df_coverage["Class Code"].isin(["684890"])) &  # Not trailer = power unit
+                    (vehicle_year_series >= current_year - 10)
+                )
+                df_coverage.loc[condition, ["OTC Deductible", "Collision Ded"]] = "5000"
+                st.success(f"Rule 1 applied to {condition.sum()} vehicles.")
+
+
+            # Rule 2: Trucks over $100K require minimum $5k deductible
+            if st.button("Apply Rule 2: Trucks > $100K → $5K Deductible"):
+                cost_new = pd.to_numeric(df_coverage["Cost New"], errors="coerce")
+                is_truck = ~df_coverage["Class Code"].isin(["739800", "684890"])
+                condition = is_truck & (cost_new > 100000)
+
+                df_coverage.loc[condition, ["OTC Deductible", "Collision Ded"]] = "5000"
+                st.success(f"Rule 2 applied to {condition.sum()} vehicles.")
+
+
+            # Rule 3: Cybertruck requires 10k ded
+            if st.button("Apply Rule 3: Cybertruck → $10K Deductible"):
+                condition = df_coverage["Model"].str.contains("CYBERTRUCK", case=False, na=False)
+                df_coverage.loc[condition, ["OTC Deductible", "Collision Ded"]] = "10000"
+                st.success(f"Rule 3 applied to {condition.sum()} vehicles.")
+
+            # Rule 4: PPT over $125K → $10K Deductible
+            if st.button("Apply Rule 4: PPTs > $125K → $10K Deductible"):
+                condition = (
+                    (df_coverage["Class Code"] == "739800") &
+                    (df_coverage["Cost New"].astype(float) > 125000)
+                )
+                df_coverage.loc[condition, ["OTC Deductible", "Collision Ded"]] = "10000"
+                st.success(f"Rule 4 applied to {condition.sum()} vehicles.")
+
+            # Rule 5: Trucks over $200K → Referral Warning
+            referral_condition = (
+                (~df_coverage["Class Code"].isin(["739800", "684890"])) &  # Not PPT or trailer = truck
+                (df_coverage["Cost New"].astype(float) > 200000)
+            )
+            if referral_condition.any():
+                st.warning(f"Referral to Chubb: {referral_condition.sum()} Trucks(s) exceed $200K in Cost New.")
+
+            # Update session state
+            st.session_state["corrected_vehicle_schedule"] = df_coverage
+
+            # Editable table
+            st.subheader("Review and Adjust Deductibles")
+            edited_df = st.data_editor(df_coverage, num_rows="dynamic")
+            if st.button("Save Changes"):
+                st.session_state["corrected_vehicle_schedule"] = edited_df
+                st.success("Changes saved successfully!")
+        else:
+             st.write("No 'Cost New' column available — cannot apply underwriting restrictions related to cost.")
+
+        st.subheader("Batch Update: Coverage Fields")
+
+        with st.form("batch_update_form"):
+            pip_value = st.selectbox("Set PIP for all vehicles", ["", "Y", "N"])
+            addtl_pip_value = st.selectbox("Set Addt'l PIP for all vehicles", ["", "Y", "N"])
+            medpay_value = st.selectbox("Set Med Pay for all vehicles", ["", "Y", "N"])
+            um_uim_value = st.selectbox("Set UM UIM (non-trailers only)", ["", "Y", "N"])
+            um_pd_value = st.selectbox("Set UM PD (non-trailers only)", ["", "Y", "N"])
+            acv_stated_value = st.selectbox("Set ACV or Stated Amount (A/S)", ["", "A", "S"])
+            towing_value = st.selectbox("Set Towing for all vehicles", ["", "Y", "N"])
+
+            submitted = st.form_submit_button("Apply Values")
+
+        if submitted:
+            # Initialize the columns if they don't exist
+            for col in ["PIP", "Addt'l PIP", "Med Pay", "UM UIM", "UM PD", "ACV or Stated Amount", "Towing"]:
+                if col not in df_coverage.columns:
+                    df_coverage[col] = ""
+
+            if pip_value:
+                df_coverage["PIP"] = pip_value
+            if addtl_pip_value:
+                df_coverage["Addt'l PIP"] = addtl_pip_value
+            if medpay_value:
+                df_coverage["Med Pay"] = medpay_value
+            if um_uim_value:
+                non_trailer_mask = df_coverage["Class Code"] != "684890"
+                df_coverage.loc[non_trailer_mask, "UM UIM"] = um_uim_value
+            if um_pd_value:
+                non_trailer_mask = df_coverage["Class Code"] != "684890"
+                df_coverage.loc[non_trailer_mask, "UM PD"] = um_pd_value
+            if acv_stated_value:
+                df_coverage["ACV or Stated Amount"] = acv_stated_value
+            if towing_value:
+                df_coverage["Towing"] = towing_value
+
+            st.session_state["corrected_vehicle_schedule"] = df_coverage
+            st.success("Batch coverage values applied successfully!")
+            st.write(st.session_state["corrected_vehicle_schedule"])
 
 
 
-
-
+        # st.subheader("test")
     # if "vehicle_schedule" in st.session_state:
     #     vehicle_schedule = st.session_state["vehicle_schedule"]
     #     # Ensure required columns exist before creating summary
