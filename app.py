@@ -547,9 +547,22 @@ elif page == "Coverage Processing":
             if towing_value:
                 df_coverage["Towing"] = towing_value
 
+
+            
             st.session_state["corrected_vehicle_schedule"] = df_coverage
+
             st.success("Batch coverage values applied successfully!")
             st.write(st.session_state["corrected_vehicle_schedule"])
+
+        
+        df_final = df_coverage.reindex(columns=vehicle_schedule_fields, fill_value="")
+        df_final["Vehicle Sequence No"] = df_final.index + 1        
+        df_final = df_final.reset_index(drop=True)
+        st.session_state["final_vehicle_schedule"] = df_final
+
+        st.write("Final Vehicle Schedule")
+        st.write(st.session_state["final_vehicle_schedule"])
+
 
 
 
