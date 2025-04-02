@@ -64,17 +64,18 @@ def map_vehicle_type(vehicle_type, body_class, gvw):
     else:
         return "Unknown"
     
-class_code_mapping = {
-    "PPT": "739800",
-    "Light Truck": "014890",
-    "Medium Truck": "214890",
-    "Heavy Truck": "314890",
-    "Extra Heavy Truck": "414890",
-    "Truck Tractor_H": "404890",
-    "Truck Tractor_XH": "504890",
-    "Trailer": "684890"
-}
 
+
+vehicle_type_code_mapping = {
+    "739800": "1",
+    "014890": "3",
+    "214890": "3",
+    "314890": "3",
+    "404890": "3",
+    "414890": "4",
+    "504890": "4",
+    "684890": "5"
+}
 
 # Function to map Vehicle Type to Class Code
 def map_class_code(vehicle_type):
@@ -137,7 +138,7 @@ def check_deductible_restrictions(df):
 
 vehicle_schedule_fields = [
     "State", "Vehicle Sequence No", "City", "Zip", "Garage Territory", "Town Code",
-    "County Code", "Tax Terr Code", "Vehicle Year", "Make", "Model", "Cleaned VIN",
+    "County Code", "Tax Terr Code", "Vehicle Year", "Make", "Model", "VIN",
     "Vehicle Type Code", "CompGroupNo", "Class Code", "Secondary Class Code",
     "Zone Territory (Garaged)", "Zone Territory (Destination)", "CO Private Pass Indiv Owned",
     "Auto Theft Prevention Surcharge", "GVW", "PIP", "Addt'l PIP", "Med Pay", "UM UIM",
@@ -173,13 +174,13 @@ if page == "Upload & Preprocessing":
         st.write(df.tail())
         
         # Map VIN Column
-        st.subheader("Map VIN Column")
+        st.subheader("Map VIN Column, this is necessary for next steps")
         vin_column_options = ["(None)"] + list(df.columns)
         vin_column = st.selectbox("Select column for VIN", options=vin_column_options, index=st.session_state.get("vin_column_index", 0))
         
         if vin_column != "(None)":
             df["Cleaned VIN"] = df[vin_column].astype(str).apply(clean_vin)
-            st.subheader("Original and Cleaned VINs (Only Modified VINs)")
+            st.subheader("VINs below are corrected for O for 0, I for 1, and extra spaces")
 
             # Filter to show only changed VINs
             filtered_vin_df = df[df[vin_column] != df["Cleaned VIN"]][[vin_column, "Cleaned VIN"]]
@@ -192,10 +193,10 @@ if page == "Upload & Preprocessing":
         
         # Desired column mappings
         desired_columns = [
-            "State", "City", "Zip", "Garage Territory", "Vehicle Year",
+            "State", "City", "Zip", "Vehicle Year",
             "Make", "Model", "Class Code", "GVW", "Cost New"
         ]
-        st.subheader("Map Existing Columns to Desired Column Names")
+        st.subheader("Map Other Columns From Submission")
         column_mapping = {}
         for col in desired_columns:
             column_mapping[col] = st.selectbox(f"Select column for '{col}'", options=vin_column_options, index=st.session_state.get(f"col_{col}_index", 0))
@@ -250,10 +251,15 @@ if page == "Upload & Preprocessing":
             st.session_state["vin_column_index"] = vin_column_options.index(vin_column)
             for col in desired_columns:
                 st.session_state[f"col_{col}_index"] = vin_column_options.index(column_mapping.get(col, "(None)"))
-            st.success("Inputs saved successfully!")
+            st.success("Inputs saved successfully! Please move on to VIN Processing step")
 
 elif page == "VIN Processing":
-    st.header("Decode VINs using NHTSA API")
+    st.header("🔍 Step 1: Decode VINs with NHTSA API")
+    st.markdown(
+        "Use this section to decode VINs and retrieve vehicle data from the [NHTSA API](https://vpic.nhtsa.dot.gov/). "
+        "Click the button below to start the decoding process."
+    )
+
     if "mapped_df" in st.session_state:
         mapped_df = st.session_state["mapped_df"]
         if "Cleaned VIN" in mapped_df.columns:
@@ -298,11 +304,14 @@ elif page == "VIN Processing":
             valid_df = st.session_state["decoded_vin_df"].drop(error_df.index)
 
             # Display the valid VIN results
-            st.write(valid_df)  
+            st.write(st.session_state["decoded_vin_df"])  
 
             # Display the error table as an **interactive editable table**
             if not error_df.empty:
-                st.subheader("Vehicles with invalid VINs below")
+                st.subheader("⚠️ Invalid VINs – Manual Review Required")
+                st.markdown(
+                    "Some VINs couldn't be decoded. Please review and correct these values manually in the next section"
+                )
                 st.write(error_df)
 
                 # # Initialize session state for corrected data if not already set
@@ -339,6 +348,12 @@ elif page == "VIN Processing":
 
  
     if "decoded_vin_df" in st.session_state and "mapped_df" in st.session_state:
+        st.divider()
+        st.header("📝 Step 2: Review and Modify Vehicle Information")
+        st.markdown(
+            "This section allows you to review the decoded vehicle data, update any incorrect or missing information, "
+            "and ensure class codes are accurate before proceeding."
+        )
         st.subheader("Mapped Vehicle List")
         if "corrected_vehicle_schedule" not in st.session_state:
             decoded_vin_df_cleaned = st.session_state["decoded_vin_df"].copy()[['Cleaned VIN', 'Make', 'Model', 'Vehicle Year', 'GVW', 'Class Code']]
@@ -437,34 +452,36 @@ elif page == "VIN Processing":
 
             st.rerun()
 
+        st.header("After reviewing and finalizing vehicle info, please move on to Coverage Processing step")
+        # st.write("After reviewing and finalizing vehicle info, please move on to Coverage Processing step")
+
 elif page == "Coverage Processing":
     st.header("Coverage Processing and Underwriting Checks")
 
     if "corrected_vehicle_schedule" in st.session_state:
         df_coverage = st.session_state["corrected_vehicle_schedule"].copy()
 
+        # Ensure deductible columns exist
+        if "OTC Deductible" not in df_coverage.columns:
+            df_coverage["OTC Deductible"] = ""
+        if "Collision Ded" not in df_coverage.columns:
+            df_coverage["Collision Ded"] = ""
+
+        st.subheader("Underwriting Deductible Rules")
+
+        # Rule 1: Power Units less than 10 years old require 5k deductible
+        if st.button("Apply Rule 1: Power Units < 10 yrs → $5K Deductible"):
+            current_year = pd.Timestamp.now().year
+            vehicle_year_series = pd.to_numeric(df_coverage["Vehicle Year"], errors="coerce")
+            
+            condition = (
+                (~df_coverage["Class Code"].isin(["684890"])) &  # Not trailer = power unit
+                (vehicle_year_series >= current_year - 10)
+            )
+            df_coverage.loc[condition, ["OTC Deductible", "Collision Ded"]] = "5000"
+            st.success(f"Rule 1 applied to {condition.sum()} vehicles.")
+
         if "Cost New" in df_coverage.columns:
-
-            # Ensure deductible columns exist
-            if "OTC Deductible" not in df_coverage.columns:
-                df_coverage["OTC Deductible"] = ""
-            if "Collision Ded" not in df_coverage.columns:
-                df_coverage["Collision Ded"] = ""
-
-            st.subheader("Underwriting Deductible Rules")
-
-            # Rule 1: Power Units less than 10 years old require 5k deductible
-            if st.button("Apply Rule 1: Power Units < 10 yrs → $5K Deductible"):
-                current_year = pd.Timestamp.now().year
-                vehicle_year_series = pd.to_numeric(df_coverage["Vehicle Year"], errors="coerce")
-                
-                condition = (
-                    (~df_coverage["Class Code"].isin(["684890"])) &  # Not trailer = power unit
-                    (vehicle_year_series >= current_year - 10)
-                )
-                df_coverage.loc[condition, ["OTC Deductible", "Collision Ded"]] = "5000"
-                st.success(f"Rule 1 applied to {condition.sum()} vehicles.")
-
 
             # Rule 2: Trucks over $100K require minimum $5k deductible
             if st.button("Apply Rule 2: Trucks > $100K → $5K Deductible"):
@@ -499,53 +516,108 @@ elif page == "Coverage Processing":
             if referral_condition.any():
                 st.warning(f"Referral to Chubb: {referral_condition.sum()} Trucks(s) exceed $200K in Cost New.")
 
-            # Update session state
-            st.session_state["corrected_vehicle_schedule"] = df_coverage
-
-            # Editable table
-            st.subheader("Review and Adjust Deductibles")
-            edited_df = st.data_editor(df_coverage, num_rows="dynamic")
-            if st.button("Save Changes"):
-                st.session_state["corrected_vehicle_schedule"] = edited_df
-                st.success("Changes saved successfully!")
         else:
-             st.write("No 'Cost New' column available — cannot apply underwriting restrictions related to cost.")
+             st.write("Submission does not contain Cost New — cannot apply underwriting restrictions related to cost.")
+        
+        # Update session state
+        st.session_state["corrected_vehicle_schedule"] = df_coverage
+
+        st.divider()
+        st.subheader("📌 Additional Adjustments")
+
+        # Layout: two side-by-side input sections
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("**Set Minimum Cost New for Trailers**")
+            trailer_threshold = st.number_input(
+                "Enter minimum Cost New for trailers",
+                min_value=0.0,
+                value=10000.0,
+                step=1000.0,
+                key="trailer_cost_threshold"
+            )
+
+            if st.button("Update Trailer Cost New"):
+                # Ensure "Cost New" column exists
+                if "Cost New" not in df_coverage.columns:
+                    df_coverage["Cost New"] = 0.0  # or you can choose to set it as np.nan
+
+                is_trailer = df_coverage["Class Code"] == "684890"
+                cost_new_numeric = pd.to_numeric(df_coverage["Cost New"], errors="coerce").fillna(0.0)
+                condition = is_trailer & (cost_new_numeric < trailer_threshold)
+
+                df_coverage.loc[condition, "Cost New"] = trailer_threshold
+                st.success(f"Updated {condition.sum()} trailer(s) to minimum ${int(trailer_threshold):,}.")
+
+
+        # --- 2. Fill Missing Deductibles ---
+        with col2:
+            st.markdown("**Fill Missing Deductibles**")
+            missing_ded_amount = st.number_input(
+                "Enter deductible amount to apply to missing values",
+                min_value=0.0,
+                value=5000.0,
+                step=500.0,
+                key="fill_missing_deds"
+            )
+
+            if st.button("Fill Missing OTC & Collision Deductibles"):
+                otc_missing = df_coverage["OTC Deductible"].isna() | (df_coverage["OTC Deductible"] == "")
+                coll_missing = df_coverage["Collision Ded"].isna() | (df_coverage["Collision Ded"] == "")
+                total_updates = otc_missing.sum() + coll_missing.sum()
+
+                df_coverage.loc[otc_missing, "OTC Deductible"] = str(int(missing_ded_amount))
+                df_coverage.loc[coll_missing, "Collision Ded"] = str(int(missing_ded_amount))
+
+                st.success(f"Filled missing deductibles for {total_updates} field(s).")
+
+
+        # Editable table
+        st.subheader("Review and Adjust Deductibles")
+        edited_df = st.data_editor(df_coverage, num_rows="dynamic")
+        if st.button("Save Changes"):
+            st.session_state["corrected_vehicle_schedule"] = edited_df
+            st.success("Changes saved successfully!")
 
         st.subheader("Batch Update: Coverage Fields")
 
         with st.form("batch_update_form"):
-            pip_value = st.selectbox("Set PIP for all vehicles", ["", "Y", "N"])
-            addtl_pip_value = st.selectbox("Set Addt'l PIP for all vehicles", ["", "Y", "N"])
-            medpay_value = st.selectbox("Set Med Pay for all vehicles", ["", "Y", "N"])
-            um_uim_value = st.selectbox("Set UM UIM (non-trailers only)", ["", "Y", "N"])
-            um_pd_value = st.selectbox("Set UM PD (non-trailers only)", ["", "Y", "N"])
-            acv_stated_value = st.selectbox("Set ACV or Stated Amount (A/S)", ["", "A", "S"])
-            towing_value = st.selectbox("Set Towing for all vehicles", ["", "Y", "N"])
+            # pip_value = st.selectbox("Set PIP for all vehicles", ["", "Y", "N"])
+            # addtl_pip_value = st.selectbox("Set Addt'l PIP for all vehicles", ["", "Y", "N"])
+            medpay_value = st.selectbox("Set Med Pay for all units", ["", "Y", "N"])
+            um_uim_value = st.selectbox("Set UM UIM for all power units", ["", "Y", "N"])
+            um_pd_value = st.selectbox("Set UM PD for all units", ["", "Y", "N"])
+            acv_stated_value = st.selectbox("Set ACV or Stated Amount (A/S) for all units", ["", "A", "S"])
+            towing_value = st.selectbox("Set Towing for PPT", ["", "Y", "N"])
 
             submitted = st.form_submit_button("Apply Values")
 
         if submitted:
             # Initialize the columns if they don't exist
-            for col in ["PIP", "Addt'l PIP", "Med Pay", "UM UIM", "UM PD", "ACV or Stated Amount", "Towing"]:
+            for col in [ "Med Pay", "UM UIM", "UM PD", "ACV or Stated Amount", "Towing"]:
+            # for col in ["PIP", "Addt'l PIP", "Med Pay", "UM UIM", "UM PD", "ACV or Stated Amount", "Towing"]:
                 if col not in df_coverage.columns:
                     df_coverage[col] = ""
 
-            if pip_value:
-                df_coverage["PIP"] = pip_value
-            if addtl_pip_value:
-                df_coverage["Addt'l PIP"] = addtl_pip_value
+            # if pip_value:
+            #     df_coverage["PIP"] = pip_value
+            # if addtl_pip_value:
+            #     df_coverage["Addt'l PIP"] = addtl_pip_value
             if medpay_value:
                 df_coverage["Med Pay"] = medpay_value
             if um_uim_value:
                 non_trailer_mask = df_coverage["Class Code"] != "684890"
                 df_coverage.loc[non_trailer_mask, "UM UIM"] = um_uim_value
             if um_pd_value:
-                non_trailer_mask = df_coverage["Class Code"] != "684890"
-                df_coverage.loc[non_trailer_mask, "UM PD"] = um_pd_value
+                # non_trailer_mask = df_coverage["Class Code"] != "684890"
+                # df_coverage.loc[non_trailer_mask, "UM PD"] = um_pd_value
+                df_coverage["UM PD"] = um_pd_value
             if acv_stated_value:
                 df_coverage["ACV or Stated Amount"] = acv_stated_value
             if towing_value:
-                df_coverage["Towing"] = towing_value
+                ppt_mask = df_coverage["Class Code"] == "739800"
+                df_coverage.loc[ppt_mask, "Towing"] = towing_value
 
 
             
@@ -558,6 +630,29 @@ elif page == "Coverage Processing":
         df_final = df_coverage.reindex(columns=vehicle_schedule_fields, fill_value="")
         df_final["Vehicle Sequence No"] = df_final.index + 1        
         df_final = df_final.reset_index(drop=True)
+
+        # getting vehicle type code
+        df_final["Vehicle Type Code"] = df_final["Class Code"].map(vehicle_type_code_mapping).fillna("")
+
+
+        # CompGroup set to 1
+        df_final["CompGroupNo"] = 1
+
+        #Mis Collision
+        df_final["Misc Collision"] = "N"
+
+
+        # OTC Coverage logic
+        df_final["OTC Coverage"] = df_final["OTC Deductible"].apply(lambda x: "0" if pd.notna(x) and str(x).strip() != "" else "")
+
+        # Collision Coverage logic
+        df_final["Collision Coverage"] = df_final["Collision Ded"].apply(lambda x: "Y" if pd.notna(x) and str(x).strip() != "" else "N")
+
+        ppt_mask = df_final["Class Code"] == "739800"
+        df_final.loc[ppt_mask, "Rental Reimbursement Cov"] = "1,3"
+        df_final.loc[ppt_mask, "Rental Reimbursement Max Amt"] = 50
+        df_final.loc[ppt_mask, "Rental Reimbursement Max Days #"] = 30
+
         st.session_state["final_vehicle_schedule"] = df_final
 
         st.write("Final Vehicle Schedule")
