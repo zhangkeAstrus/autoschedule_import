@@ -150,10 +150,14 @@ vehicle_schedule_fields = [
 ]
 
 st.title("Vehicle Schedule Submission Review")
+
 st.sidebar.title("Navigation")
 page = st.sidebar.radio("Go to:", ["Upload & Preprocessing", "VIN Processing" , "Coverage Processing"])
 
 if page == "Upload & Preprocessing":
+    st.markdown("## 📥 Upload & Preprocessing")
+    st.markdown("Use this section to upload and clean your Excel data.")
+    st.markdown("---")
     uploaded_file = st.file_uploader("Upload an Excel file with vehicle submission data", type=["xlsx"])
     
     if uploaded_file is not None:
@@ -262,10 +266,9 @@ elif page == "VIN Processing":
 
     if "mapped_df" in st.session_state:
         mapped_df = st.session_state["mapped_df"]
-        if "Cleaned VIN" in mapped_df.columns:
-            if st.button("Decode VINs"):
-                start_time = time.time() # start timer
-
+        if st.button("🔍 Decode VINs"):
+            with st.spinner("Decoding VINs... this may take a moment."):
+                start_time = time.time()
                 decoded_vin_df = decode_vins(mapped_df["Cleaned VIN"].tolist())
                 selected_fields = ["VIN", "Make", "Model", "VehicleType", "GVWR", "ModelYear" , "BodyClass", "ErrorCode", "ErrorText"]
                 decoded_vin_df = decoded_vin_df[selected_fields]
