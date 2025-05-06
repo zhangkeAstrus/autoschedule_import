@@ -92,6 +92,21 @@ def map_class_code(vehicle_type):
     }
     return class_code_mapping.get(vehicle_type, "Unknown")
 
+
+
+class_code_mapping_coverall = {
+    "739800": "", 
+    "014890": "Light Trucks",
+    "214890": "Medium Trucks",
+    "314890": "Heavy Trucks",
+    "414890": "Extra-Heavy Trucks",
+    "404890": "Heavy Truck-Tractors",
+    "504890": "Extra-Heavy Truck-Tractors",
+    "684890": ""
+}
+
+
+
 def check_deductible_restrictions(df):
     violations = []
     warnings = []
@@ -148,6 +163,40 @@ vehicle_schedule_fields = [
     "Rental Reimbursement Max Amt", "Rental Reimbursement Max Days #",
     "Vehicle Comp Deductible Override Factor", "Vehicle Collision Deductible Override Factor"
 ]
+
+company_b_fields = {
+    "Vehicle No": "Vehicle Sequence No",
+    "VIN": "VIN",
+    "Year": "Vehicle Year",
+    "Make": "Make",
+    "Model": "Model",
+    "Trim": "",  # Empty or NaN
+    "Territory": "",
+    "Territory Description": "",
+    "Vehicle Type": "Vehicle Type (Company_B)",
+    "Special Type": "",
+    "Sub Class": "",
+    "Detailed Class": "",
+    "Manually Enter Rating Class?": "N",
+    "Size": "Size (Company_B)", 
+    "Use of Vehicle": "Service",
+    "Radius": "Local(Up To 50 Miles)",
+    "Special Industry Type": "Contractors",
+    "Special Industry Class": "All Other",
+    "Primary Classification": "Primary Classification (Company_B)",
+    "Secondary Classification": "Secondary Classification (Company_B)",
+    "Nearest Terminal": "",
+    "Farthest Terminal": "",
+    "Gross Vehicle Weight Rating": "",
+    "Street": "",
+    "City": "City",
+    "State": "State",
+    "Zip": "Zip",
+    "Other than Collision": "Other than Collision (Company_B)",
+    "Collision": "Collision (Company_B)",
+    "Original Cost New": "Cost New"
+}
+
 
 st.title("Vehicle Schedule Submission Review")
 
@@ -656,10 +705,55 @@ elif page == "Coverage Processing":
         df_final.loc[ppt_mask, "Rental Reimbursement Max Amt"] = 50
         df_final.loc[ppt_mask, "Rental Reimbursement Max Days #"] = 30
 
+
+        # add ons for company B
+        df_final["Vehicle Type (Company_B)"] = df_final["Class Code"].apply(
+            lambda x: "Private Passenger" if x == "739800" else "Trucks, Tractors and Trailers"
+            )
+        df_final["Size (Company_B)"] = df_final["Class Code"].map(class_code_mapping_coverall).fillna("")
+        # Primary Classification: first 3 digits
+        df_final["Primary Classification (Company_B)"] = df_final["Class Code"].str[:3]
+        # Secondary Classification: remaining digits with trailing '0' removed
+        df_final["Secondary Classification (Company_B)"] = (
+            df_final["Class Code"].str[3:].str.rstrip("0")
+            )
+        # Other than Collision logic
+        df_final["Other than Collision (Company_B)"] = df_final["OTC Coverage"].apply(
+            lambda x: "Y" if str(x).strip() == "0" else ""
+        )
+
+        # Collision logic
+        df_final["Collision (Company_B)"] = df_final["Collision Coverage"].apply(
+            lambda x: "" if str(x).strip().upper() == "N" else str(x).strip()
+        )
+
+
+
+
         st.session_state["final_vehicle_schedule"] = df_final
 
-        st.write("Final Vehicle Schedule")
-        st.write(st.session_state["final_vehicle_schedule"])
+
+
+        st.subheader("Select Output Format")
+        output_format = st.selectbox("Choose a carrier format:", ["Chubb", "Company_B"])
+
+        if output_format == "Company_B":
+            df_b = pd.DataFrame()
+
+            for target_col, source_col in company_b_fields.items():
+                if source_col in df_final.columns:
+                    df_b[target_col] = df_final[source_col]
+                else:
+                    df_b[target_col] = source_col  # for fixed values like "N", "Contractors", etc.
+
+            st.subheader("Final Vehicle Schedule – Company_B Format")
+            st.write(df_b)
+            st.session_state["final_vehicle_schedule_b"] = df_b
+        else:
+            st.subheader("Final Vehicle Schedule – Chubb Format")
+            st.write(df_final[vehicle_schedule_fields]) 
+            st.session_state["final_vehicle_schedule"] = df_final[vehicle_schedule_fields]
+
 
 
 
