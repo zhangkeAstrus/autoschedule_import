@@ -24,7 +24,7 @@ def decode_vins(vins):
     for i in range(0, len(vins), batch_size):
         batch = vins[i: i + batch_size]
         params = {"format": "json", "data": ";".join(batch)}
-        response = requests.post(url, data=params)
+        response = requests.post(url, data=params, verify=False)
         if response.status_code == 200:
             results = response.json().get("Results", [])
             all_results.extend(results)
@@ -102,7 +102,7 @@ class_code_mapping_coverall = {
     "414890": "Extra-Heavy Trucks",
     "404890": "Heavy Truck-Tractors",
     "504890": "Extra-Heavy Truck-Tractors",
-    "684890": ""
+    "684890": "Trailers"
 }
 
 
@@ -164,7 +164,7 @@ vehicle_schedule_fields = [
     "Vehicle Comp Deductible Override Factor", "Vehicle Collision Deductible Override Factor"
 ]
 
-company_b_fields = {
+AXA_fields = {
     "Vehicle No": "Vehicle Sequence No",
     "VIN": "VIN",
     "Year": "Vehicle Year",
@@ -173,18 +173,18 @@ company_b_fields = {
     "Trim": "",  # Empty or NaN
     "Territory": "",
     "Territory Description": "",
-    "Vehicle Type": "Vehicle Type (Company_B)",
+    "Vehicle Type": "Vehicle Type (AXA/XL)",
     "Special Type": "",
     "Sub Class": "",
     "Detailed Class": "",
-    "Manually Enter Rating Class?": "N",
-    "Size": "Size (Company_B)", 
+    "Manually Enter Rating Class?": "Y",
+    "Size": "Size (AXA/XL)", 
     "Use of Vehicle": "Service",
     "Radius": "Local(Up To 50 Miles)",
     "Special Industry Type": "Contractors",
     "Special Industry Class": "All Other",
-    "Primary Classification": "Primary Classification (Company_B)",
-    "Secondary Classification": "Secondary Classification (Company_B)",
+    "Primary Classification": "Primary Classification (AXA/XL)",
+    "Secondary Classification": "Secondary Classification (AXA/XL)",
     "Nearest Terminal": "",
     "Farthest Terminal": "",
     "Gross Vehicle Weight Rating": "",
@@ -192,8 +192,8 @@ company_b_fields = {
     "City": "City",
     "State": "State",
     "Zip": "Zip",
-    "Other than Collision": "Other than Collision (Company_B)",
-    "Collision": "Collision (Company_B)",
+    "Other than Collision": "Other than Collision (AXA/XL)",
+    "Collision": "Collision (AXA/XL)",
     "Original Cost New": "Cost New"
 }
 
@@ -581,26 +581,40 @@ elif page == "Coverage Processing":
         col1, col2 = st.columns(2)
 
         with col1:
-            st.markdown("**Set Minimum Cost New for Trailers**")
-            trailer_threshold = st.number_input(
-                "Enter minimum Cost New for trailers",
+            st.markdown("**Set Minimum Cost New by Vehicle Type**")
+
+            # Dropdown for vehicle types
+            vehicle_type_options = {
+                "Private Passenger (PPT)": "739800",
+                "Light Truck": "014890",
+                "Medium Truck": "214890",
+                "Heavy Truck": "314890",
+                "Extra-Heavy Truck": "414890",
+                "Truck Tractor (Heavy)": "404890",
+                "Truck Tractor (Extra Heavy)": "504890",
+                "Trailer": "684890"
+            }
+
+            selected_type_label = st.selectbox("Choose vehicle type", list(vehicle_type_options.keys()), key="selected_vehicle_type")
+            selected_class_code = vehicle_type_options[selected_type_label]
+
+            min_cost_new = st.number_input(
+                f"Enter minimum 'Cost New' for {selected_type_label}",
                 min_value=0.0,
                 value=10000.0,
                 step=1000.0,
-                key="trailer_cost_threshold"
+                key="min_cost_new_input"
             )
 
-            if st.button("Update Trailer Cost New"):
-                # Ensure "Cost New" column exists
+            if st.button("Apply Minimum Cost New Rule"):
                 if "Cost New" not in df_coverage.columns:
-                    df_coverage["Cost New"] = 0.0  # or you can choose to set it as np.nan
-
-                is_trailer = df_coverage["Class Code"] == "684890"
+                    df_coverage["Cost New"] = 0.0  # Initialize if missing
                 cost_new_numeric = pd.to_numeric(df_coverage["Cost New"], errors="coerce").fillna(0.0)
-                condition = is_trailer & (cost_new_numeric < trailer_threshold)
+                condition = (df_coverage["Class Code"] == selected_class_code) & (cost_new_numeric < min_cost_new)
 
-                df_coverage.loc[condition, "Cost New"] = trailer_threshold
-                st.success(f"Updated {condition.sum()} trailer(s) to minimum ${int(trailer_threshold):,}.")
+                df_coverage.loc[condition, "Cost New"] = min_cost_new
+                st.success(f"Updated {condition.sum()} vehicle(s) of type '{selected_type_label}' to minimum ${int(min_cost_new):,}.")
+
 
 
         # --- 2. Fill Missing Deductibles ---
@@ -706,24 +720,24 @@ elif page == "Coverage Processing":
         df_final.loc[ppt_mask, "Rental Reimbursement Max Days #"] = 30
 
 
-        # add ons for company B
-        df_final["Vehicle Type (Company_B)"] = df_final["Class Code"].apply(
+        # add ons for AXA/XL
+        df_final["Vehicle Type (AXA/XL)"] = df_final["Class Code"].apply(
             lambda x: "Private Passenger" if x == "739800" else "Trucks, Tractors and Trailers"
             )
-        df_final["Size (Company_B)"] = df_final["Class Code"].map(class_code_mapping_coverall).fillna("")
+        df_final["Size (AXA/XL)"] = df_final["Class Code"].map(class_code_mapping_coverall).fillna("")
         # Primary Classification: first 3 digits
-        df_final["Primary Classification (Company_B)"] = df_final["Class Code"].str[:3]
+        df_final["Primary Classification (AXA/XL)"] = df_final["Class Code"].str[:3]
         # Secondary Classification: remaining digits with trailing '0' removed
-        df_final["Secondary Classification (Company_B)"] = (
+        df_final["Secondary Classification (AXA/XL)"] = (
             df_final["Class Code"].str[3:].str.rstrip("0")
             )
         # Other than Collision logic
-        df_final["Other than Collision (Company_B)"] = df_final["OTC Coverage"].apply(
+        df_final["Other than Collision (AXA/XL)"] = df_final["OTC Coverage"].apply(
             lambda x: "Y" if str(x).strip() == "0" else ""
         )
 
         # Collision logic
-        df_final["Collision (Company_B)"] = df_final["Collision Coverage"].apply(
+        df_final["Collision (AXA/XL)"] = df_final["Collision Coverage"].apply(
             lambda x: "" if str(x).strip().upper() == "N" else str(x).strip()
         )
 
@@ -735,18 +749,18 @@ elif page == "Coverage Processing":
 
 
         st.subheader("Select Output Format")
-        output_format = st.selectbox("Choose a carrier format:", ["Chubb", "Company_B"])
+        output_format = st.selectbox("Choose a carrier format:", ["Chubb", "AXA/XL"])
 
-        if output_format == "Company_B":
+        if output_format == "AXA/XL":
             df_b = pd.DataFrame()
 
-            for target_col, source_col in company_b_fields.items():
+            for target_col, source_col in AXA_fields.items():
                 if source_col in df_final.columns:
                     df_b[target_col] = df_final[source_col]
                 else:
                     df_b[target_col] = source_col  # for fixed values like "N", "Contractors", etc.
 
-            st.subheader("Final Vehicle Schedule – Company_B Format")
+            st.subheader("Final Vehicle Schedule – AXA/XL Format")
             st.write(df_b)
             st.session_state["final_vehicle_schedule_b"] = df_b
         else:
