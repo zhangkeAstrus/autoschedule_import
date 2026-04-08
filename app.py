@@ -13,42 +13,23 @@ st.set_page_config(layout="wide")
 def clean_vin(vin):
     """Cleans up the VIN by trimming spaces and replacing O->0, I->1."""
     if pd.isna(vin):
-        return pd.NA
-    vin = str(vin).strip().upper()
-    if vin == "":
-        return pd.NA
-    return vin.replace("O", "0").replace("I", "1")
+        return vin
+    return vin.strip().upper().replace("O", "0").replace("I", "1")
 
 # Function to decode VINs using NHTSA API
 def decode_vins(vins):
     url = "https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVINValuesBatch/"
-    batch_size = 50
+    batch_size = 50  # NHTSA API limit
     all_results = []
-
-    # keep only non-empty strings
-    vins = [
-        str(v).strip()
-        for v in vins
-        if pd.notna(v) and str(v).strip() != ""
-    ]
-
-    if not vins:
-        return pd.DataFrame()
-
     for i in range(0, len(vins), batch_size):
-        batch = vins[i:i + batch_size]
+        batch = vins[i: i + batch_size]
         params = {"format": "json", "data": ";".join(batch)}
-
-        try:
-            response = requests.post(url, data=params, verify=False, timeout=30)
-            if response.status_code == 200:
-                results = response.json().get("Results", [])
-                all_results.extend(results)
-            else:
-                st.error(f"Error fetching VIN data from NHTSA API for batch {i // batch_size + 1}")
-        except Exception as e:
-            st.error(f"VIN decode failed for batch {i // batch_size + 1}: {e}")
-
+        response = requests.post(url, data=params, verify=False)
+        if response.status_code == 200:
+            results = response.json().get("Results", [])
+            all_results.extend(results)
+        else:
+            st.error(f"Error fetching VIN data from NHTSA API for batch {i // batch_size + 1}")
     return pd.DataFrame(all_results) if all_results else pd.DataFrame()
 
 # Function to extract weight (GVWR) from text
@@ -337,78 +318,27 @@ elif page == "VIN Processing":
         if st.button("🔍 Decode VINs"):
             with st.spinner("Decoding VINs... this may take a moment."):
                 start_time = time.time()
-
-                base_df = mapped_df.copy()
-
-                # Keep only valid VINs for API decode
-                vin_series = base_df["Cleaned VIN"]
-                valid_vins = (
-                    vin_series
-                    .dropna()
-                    .astype(str)
-                    .str.strip()
-                )
-                valid_vins = valid_vins[valid_vins != ""]
-
-                # Decode only valid VINs
-                decoded_vin_df = decode_vins(valid_vins.tolist())
-
-                selected_fields = [
-                    "VIN", "Make", "Model", "VehicleType", "GVWR",
-                    "ModelYear", "BodyClass", "ErrorCode", "ErrorText"
-                ]
+                decoded_vin_df = decode_vins(mapped_df["Cleaned VIN"].tolist())
+                selected_fields = ["VIN", "Make", "Model", "VehicleType", "GVWR", "ModelYear" , "BodyClass", "ErrorCode", "ErrorText"]
                 decoded_vin_df = decoded_vin_df.reindex(columns=selected_fields)
+                
+                # Compute class codes
+                decoded_vin_df["GVW"] = decoded_vin_df["GVWR"].apply(extract_gvwr_weight)
+                decoded_vin_df["Mapped Vehicle Type"] = decoded_vin_df.apply(lambda row: map_vehicle_type(row["VehicleType"], row["BodyClass"], row["GVW"]), axis=1)
+                decoded_vin_df["Class Code"] = decoded_vin_df["Mapped Vehicle Type"].apply(map_class_code)
 
-                # Only do decode-derived logic if API returned something
-                if not decoded_vin_df.empty:
-                    decoded_vin_df["GVW"] = decoded_vin_df["GVWR"].apply(extract_gvwr_weight)
-                    decoded_vin_df["Mapped Vehicle Type"] = decoded_vin_df.apply(
-                        lambda row: map_vehicle_type(row["VehicleType"], row["BodyClass"], row["GVW"]),
-                        axis=1
-                    )
-                    decoded_vin_df["Class Code"] = decoded_vin_df["Mapped Vehicle Type"].apply(map_class_code)
+                # Replace empty strings ("") with NaN to ensure combine_first() works correctly
+                decoded_vin_df.replace("", pd.NA, inplace=True)
 
-                    decoded_vin_df.replace("", pd.NA, inplace=True)
-                    decoded_vin_df.rename(
-                        columns={"VIN": "Cleaned VIN", "ModelYear": "Vehicle Year"},
-                        inplace=True
-                    )
-                else:
-                    # Create empty columns so merge logic still works
-                    decoded_vin_df = pd.DataFrame(columns=[
-                        "Cleaned VIN", "Make", "Model", "Vehicle Year",
-                        "GVW", "Class Code", "ErrorCode", "ErrorText"
-                    ])
+                decoded_vin_df.rename(columns = {"ModelYear" : "Vehicle Year", "VIN" : "Cleaned VIN"}, inplace = True)
 
-                # Merge decoded info back to original mapped_df
-                decoded_vin_df = base_df.merge(
-                    decoded_vin_df[[
-                        "Cleaned VIN", "Make", "Model", "Vehicle Year",
-                        "GVW", "Class Code", "ErrorCode", "ErrorText"
-                    ]],
-                    on="Cleaned VIN",
-                    how="left",
-                    suffixes=("_orig", "")
-                )
+                end_time = time.time() #End timer
+                time_taken = round(end_time - start_time, 2) 
 
-                # Prefer decoded values, fallback to original submission values
-                for col in ["Make", "Model", "Vehicle Year", "GVW", "Class Code"]:
-                    orig_col = f"{col}_orig"
-                    if orig_col in decoded_vin_df.columns:
-                        decoded_vin_df[col] = decoded_vin_df[col].combine_first(decoded_vin_df[orig_col])
-                        decoded_vin_df.drop(columns=[orig_col], inplace=True)
-
-                # Optional: flag VIN status for user review
-                decoded_vin_df["VIN Status"] = decoded_vin_df["Cleaned VIN"].apply(
-                    lambda x: "Missing VIN" if pd.isna(x) or str(x).strip() == "" else "VIN Provided"
-                )
-
-                end_time = time.time()
-                time_taken = round(end_time - start_time, 2)
-                num_vins_processed = len(valid_vins)
-
+                num_vins_processed = len(decoded_vin_df)
+                
                 st.session_state["decoded_vin_df"] = decoded_vin_df
-                st.success(f"Processed {num_vins_processed} VIN(s) in {time_taken} seconds.")
+                st.success(f"Processed {num_vins_processed} vehicles. VINs decoded successfully in {time_taken} seconds!")
     
     if "decoded_vin_df" in st.session_state:
         st.subheader("Decoded VIN Results with Class Codes")
