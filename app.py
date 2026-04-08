@@ -11,10 +11,19 @@ st.set_page_config(layout="wide")
 
 # VIN Cleaning Function
 def clean_vin(vin):
-    """Cleans up the VIN by trimming spaces and replacing O->0, I->1."""
+    """Cleans VIN and replaces invalid/empty values with a dummy VIN."""
+    DUMMY_VIN = "11111111111111111"  # 17-char placeholder
+
     if pd.isna(vin):
-        return vin
-    return vin.strip().upper().replace("O", "0").replace("I", "1")
+        return DUMMY_VIN
+
+    vin_clean = str(vin).strip().upper().replace("O", "0").replace("I", "1")
+
+    # Handle empty or invalid VINs
+    if vin_clean == "" or len(vin_clean) != 17:
+        return DUMMY_VIN
+
+    return vin_clean
 
 # Function to decode VINs using NHTSA API
 def decode_vins(vins):
