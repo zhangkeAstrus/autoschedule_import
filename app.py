@@ -59,16 +59,26 @@ def extract_gvwr_weight(gvwr_text):
     match = re.search(r"(\d{1,3}(?:,\d{3})*)\s*lb", gvwr_text)
     if match:
         return int(match.group(1).replace(",", ""))
-    return None
+    return pd.NA
 
 # Function to determine Vehicle Type based on GVWR and VehicleType
 def map_vehicle_type(vehicle_type, body_class, gvw):
     """Maps GVWR and VehicleType to the corresponding Vehicle Type category."""
+    if pd.isna(vehicle_type):
+        vehicle_type = ""
+    if pd.isna(body_class):
+        body_class = ""
+
     if vehicle_type == "TRAILER":
         return "Trailer"
-    elif vehicle_type =="MULTIPURPOSE PASSENGER VEHICLE (MPV)" or vehicle_type == "PASSENGER CAR":
+    elif vehicle_type == "MULTIPURPOSE PASSENGER VEHICLE (MPV)" or vehicle_type == "PASSENGER CAR":
         return "PPT"
-    elif body_class == "Truck-Tractor" and gvw <= 45000:
+
+    # If GVW is missing, we can't do weight-based mapping
+    if pd.isna(gvw):
+        return "Unknown"
+
+    if body_class == "Truck-Tractor" and gvw <= 45000:
         return "Truck Tractor_H"
     elif body_class == "Truck-Tractor" and gvw > 45000:
         return "Truck Tractor_XH"
