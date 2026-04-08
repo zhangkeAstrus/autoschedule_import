@@ -320,7 +320,7 @@ elif page == "VIN Processing":
                 start_time = time.time()
                 decoded_vin_df = decode_vins(mapped_df["Cleaned VIN"].tolist())
                 selected_fields = ["VIN", "Make", "Model", "VehicleType", "GVWR", "ModelYear" , "BodyClass", "ErrorCode", "ErrorText"]
-                decoded_vin_df = decoded_vin_df[selected_fields]
+                decoded_vin_df = decoded_vin_df.reindex(columns=selected_fields)
                 
                 # Compute class codes
                 decoded_vin_df["GVW"] = decoded_vin_df["GVWR"].apply(extract_gvwr_weight)
@@ -716,6 +716,14 @@ elif page == "Coverage Processing":
 
         ppt_mask = df_final["Class Code"] == "739800"
         df_final.loc[ppt_mask, "Rental Reimbursement Cov"] = "1,3"
+
+        numeric_cols = [
+            "Rental Reimbursement Max Amt",
+            "Rental Reimbursement Max Days #"
+        ]
+
+        for col in numeric_cols:
+            df_final[col] = pd.to_numeric(df_final[col], errors="coerce")
         df_final.loc[ppt_mask, "Rental Reimbursement Max Amt"] = 50
         df_final.loc[ppt_mask, "Rental Reimbursement Max Days #"] = 30
 
