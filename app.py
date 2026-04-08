@@ -418,11 +418,13 @@ elif page == "VIN Processing":
         st.subheader("Mapped Vehicle List")
         if "corrected_vehicle_schedule" not in st.session_state:
             decoded_vin_df_cleaned = st.session_state["decoded_vin_df"].copy()[['Cleaned VIN', 'Make', 'Model', 'Vehicle Year', 'GVW', 'Class Code']]
-
-            # Merge data: decoded_vin_df takes priority, final_df fills missing values
             vehicle_schedule = decoded_vin_df_cleaned.combine_first(st.session_state["mapped_df"].copy())
             vehicle_schedule.drop(['VIN'], axis=1, inplace=True)
             vehicle_schedule.rename(columns={'Cleaned VIN': 'VIN'}, inplace=True)
+
+            vehicle_schedule = vehicle_schedule.reset_index(drop=True)
+            vehicle_schedule["row_id"] = vehicle_schedule.index
+
             st.session_state["corrected_vehicle_schedule"] = vehicle_schedule
 
 
@@ -474,44 +476,28 @@ elif page == "VIN Processing":
             st.markdown(html_table, unsafe_allow_html=True)
 
 
-
-
-
         # Create a filter input for Class Code
         filter_value = st.text_input("Filter by Class Code and make changes:")
 
-        # Filter the DataFrame based on the input value
-        if filter_value:
-            filtered_df = st.session_state["corrected_vehicle_schedule"][
-                st.session_state["corrected_vehicle_schedule"]["Class Code"].str.contains(filter_value, case=False, na=False)
-            ]
-        else:
-            filtered_df = st.session_state["corrected_vehicle_schedule"]
+        source_df = st.session_state["corrected_vehicle_schedule"]
 
-        # Display the filtered data in the editable table
+        if filter_value:
+            filtered_df = source_df[source_df["Class Code"].astype(str).str.contains(filter_value, case=False, na=False)]
+        else:
+            filtered_df = source_df
+
         edited_vehicle_schedule = st.data_editor(filtered_df, num_rows="dynamic")
 
         if st.button("Save Changes"):
-            # Get the edited DataFrame from the data editor
-            edited_df = edited_vehicle_schedule.copy()
-            
-            # Get the full DataFrame from session state
-            full_df = st.session_state["corrected_vehicle_schedule"]
-            
-            # Assume that "VIN" is unique and exists in both DataFrames.
-            # Set the index to "VIN" for merging purposes
-            full_df = full_df.set_index("VIN")
-            edited_df = edited_df.set_index("VIN")
-            
-            # Update only the rows that were edited (present in the filtered view)
-            full_df.update(edited_df)
-            
-            # Reset the index if needed
-            st.session_state["corrected_vehicle_schedule"] = full_df.reset_index()
-            
-            st.success("Changes saved successfully!")
+            full_df = st.session_state["corrected_vehicle_schedule"].copy().set_index("row_id")
+            edited_df = edited_vehicle_schedule.copy().set_index("row_id")
 
+            full_df.update(edited_df)
+
+            st.session_state["corrected_vehicle_schedule"] = full_df.reset_index()
+            st.success("Changes saved successfully!")
             st.rerun()
+
 
         st.header("After reviewing and finalizing vehicle info, please move on to Coverage Processing step")
         # st.write("After reviewing and finalizing vehicle info, please move on to Coverage Processing step")
