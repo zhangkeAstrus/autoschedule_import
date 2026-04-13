@@ -20,7 +20,7 @@ def clean_vin(vin):
     vin_clean = str(vin).strip().upper().replace("O", "0").replace("I", "1")
 
     # Handle empty or invalid VINs
-    if vin_clean == "" or len(vin_clean) != 17:
+    if vin_clean == "" :
         return DUMMY_VIN
 
     return vin_clean
