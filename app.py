@@ -101,7 +101,16 @@ def map_class_code(vehicle_type):
     }
     return class_code_mapping.get(vehicle_type, "Unknown")
 
-
+alternate_vehicle_type_mapping = {
+    "PPT": "PPT",
+    "Light Truck": "Light",
+    "Medium Truck": "Medium",
+    "Heavy Truck": "Heavy",
+    "Truck Tractor_H": "Heavy Truck-Tractor",
+    "Extra Heavy Truck": "Extra-Heavy",
+    "Truck Tractor_XH": "Extra-Heavy Truck-Tractor",
+    "Trailer": "Trailer"
+}
 
 class_code_mapping_coverall = {
     "739800": "", 
@@ -335,6 +344,8 @@ elif page == "VIN Processing":
                 decoded_vin_df["GVW"] = decoded_vin_df["GVWR"].apply(extract_gvwr_weight)
                 decoded_vin_df["Mapped Vehicle Type"] = decoded_vin_df.apply(lambda row: map_vehicle_type(row["VehicleType"], row["BodyClass"], row["GVW"]), axis=1)
                 decoded_vin_df["Class Code"] = decoded_vin_df["Mapped Vehicle Type"].apply(map_class_code)
+
+                decoded_vin_df["vehicle_type_alt"] = decoded_vin_df["Mapped Vehicle Type"].map(alternate_vehicle_type_mapping).fillna("Unknown")
 
                 # Replace empty strings ("") with NaN to ensure combine_first() works correctly
                 decoded_vin_df.replace("", pd.NA, inplace=True)
